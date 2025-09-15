@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 
@@ -23,6 +29,7 @@ typedef enum DXRT_API
     FW_LOG_HIGH_LOCK_IRQ,
     FW_LOG_HIGH_UNLOCK_IRQ,
     FW_LOG_TASK_LOCK,
+    FW_LOG_VOLT_UNDER_IRQ,
     FW_LOG_MAX,
 } dxrt_fwlog_cmd_t;
 
@@ -64,10 +71,13 @@ public:
     FwLog(std::vector<dxrt_device_log_t>);
     ~FwLog();
     std::string str();
-    void toFile(std::string file);
+    void ToFileAppend(std::string file);
+    void SetDeviceInfoString(std::string str)
+    { _deviceInfoString = str; }
 private:
     std::vector<dxrt_device_log_t> _logs;
     std::string _str;
+    std::string _deviceInfoString;
 };
 
 class DXRT_API Fw
@@ -79,6 +89,9 @@ public:
     std::string GetFwBinVersion();
     bool IsMatchSignature();
     std::string GetFwUpdateResult(uint32_t);
+    uint32_t GetBoardType();
+    std::string GetBoardTypeString();
+    std::string GetDdrTypeString();
 private:
     dx_fw_header_t fwHeader;
 };

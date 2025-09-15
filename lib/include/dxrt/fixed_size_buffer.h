@@ -1,11 +1,17 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 
-#include<cstdint>
-#include<vector>
-#include<mutex>
+#include <cstdint>
+#include <vector>
+#include <mutex>
 #include <condition_variable>
 
 
@@ -20,7 +26,7 @@ class FixedSizeBuffer
     void releaseBuffer(void* ptr);
     bool hasBuffer();
     int64_t size() { return _size;}
-   ~FixedSizeBuffer();
+    ~FixedSizeBuffer();
 
  private:
     std::vector<void*> _data;
@@ -30,7 +36,6 @@ class FixedSizeBuffer
     int64_t _size;
     std::mutex _lock;
     std::condition_variable _cv;
-
 };
 
 

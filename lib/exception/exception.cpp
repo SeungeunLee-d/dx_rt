@@ -1,4 +1,13 @@
 
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
+
 #include "../include/dxrt/exception/exception.h"
 
 #include <iostream>
@@ -46,7 +55,7 @@ namespace dxrt {
        
     FileNotFoundException::FileNotFoundException(const std::string& msg)
     {
-        setMessage("File not found execption {" + msg + "}");
+        setMessage("File not found exception {" + msg + "}");
         setCode(ERROR_CODE::FILE_NOT_FOUND);
     }
 
@@ -58,7 +67,7 @@ namespace dxrt {
 
     NullPointerException::NullPointerException(const std::string& msg)
     {
-        setMessage("Null pointer execption {" + msg + "}");
+        setMessage("Null pointer exception {" + msg + "}");
         setCode(ERROR_CODE::NULL_POINTER);
     }
 

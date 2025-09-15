@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 
@@ -56,10 +62,6 @@ namespace dxrt {
             if ( _dataPool.empty() ) return nullptr;
             for (size_t i = 0; i < _dataPool.size(); ++i)
             {
-                if (_headIndex >= _dataPool.size()) // Adding bounds check
-                {
-                    _headIndex = 0; // Resetting index (to prevent potential errors)
-                }
                 std::shared_ptr<T> data = _dataPool[_headIndex];
                 _headIndex++;
                 if ( _headIndex == _dataPool.size() )

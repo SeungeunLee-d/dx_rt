@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "dxrt/profiler.h"
 #include <iostream>
@@ -9,20 +15,25 @@
 #include "dxrt/request.h"
 #include "dxrt/task.h"
 #include "dxrt/configuration.h"
-#include "rapidjson/document.h"
-#include "rapidjson/writer.h"
-#include "rapidjson/prettywriter.h"
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/filereadstream.h"
-#include "rapidjson/pointer.h"
-#include "rapidjson/rapidjson.h"
+#include "dxrt/extern/rapidjson/document.h"
+#include "dxrt/extern/rapidjson/writer.h"
+#include "dxrt/extern/rapidjson/prettywriter.h"
+#include "dxrt/extern/rapidjson/stringbuffer.h"
+#include "dxrt/extern/rapidjson/filereadstream.h"
+#include "dxrt/extern/rapidjson/pointer.h"
+#include "dxrt/extern/rapidjson/rapidjson.h"
 #include "dxrt/exception/exception.h"
+#include "resource/log_messages.h"
 
 #define PROFILER_FORCE_SHOW_DURATIONS 1
 
 using std::cout;
-using std::cerr;
 using std::endl;
+using std::setw;
+using std::hex;
+using std::dec;
+using std::vector;
+using std::string;
 using rapidjson::Document;
 using rapidjson::kObjectType;
 using rapidjson::kArrayType;
@@ -50,7 +61,7 @@ namespace dxrt
 
 
     Profiler::Profiler()
-    : _save_exit(SAVE_PROFILER_DATA), _show_exit(SHOW_PROFILER_DATA), _enabled(USE_PROFILER)
+    : _save_exit(ENABLE_SAVE_PROFILER_DATA), _show_exit(ENABLE_SHOW_PROFILER_DATA), _enabled(USE_PROFILER)
     {
         LOG_DXRT_DBG << endl;
     }
@@ -90,11 +101,11 @@ namespace dxrt
                 }
                 catch (std::exception& e)
                 {
-                    cerr << e.what() << endl;
+                    LOG_DXRT_ERR(e.what());
                 }
                 catch (...)
                 {
-                    cerr << "UNKNOWN error type" << endl;
+                    LOG_DXRT_ERR("UNKNOWN error type");
                 }
             }
         }
@@ -107,7 +118,18 @@ namespace dxrt
         else
             LOG_DXRT_DBG << x << endl;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
+        
+        call_count++;
+        
+        uint64_t current_memory = call_count * MEMORY_PER_EVENT;
+        uint64_t current_multiplier = current_memory / THRESHOLD_BASE;
+        
+        if (current_multiplier > last_threshold_passed) {
+            LOG_DXRT_INFO(LogMessages::Profiler_MemoryUsage(current_memory));
+            last_threshold_passed = current_multiplier;
+        }
+        
         if (timePoints.find(x) == timePoints.end())
         {
             timePoints.insert(make_pair(x, vector<TimePoint>(numSamples + 1)));
@@ -126,7 +148,7 @@ namespace dxrt
             LOG_DXRT_DBG << x << endl;
         Add(x);
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (timePoints.empty())
             return;
         ++(idx.at(x));
@@ -142,7 +164,7 @@ namespace dxrt
             LOG_DXRT_DBG << x << endl;
         Add(x);
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (timePoints.empty()) return;
         ++(idx.at(x));
         if (idx.at(x) >= numSamples) idx.at(x) = 0;
@@ -156,7 +178,7 @@ namespace dxrt
         else
             LOG_DXRT_DBG << x << endl;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (timePoints.empty()) return;
         if (timePoints.find(x) != timePoints.end())
         {
@@ -173,11 +195,11 @@ namespace dxrt
     {
         if (_enabled == false) return 0;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (timePoints.find(x) != timePoints.end())
         {
             int idx_ = idx.at(x);
-            int ret = chrono::duration_cast<chrono::microseconds>(
+            int ret = std::chrono::duration_cast<std::chrono::microseconds>(
                 timePoints.at(x)[idx_].end - timePoints.at(x)[idx_].start).count();
             if (ret < 0)
                 ret = 0;
@@ -193,7 +215,7 @@ namespace dxrt
     {
         if (_enabled == false) return 0.0;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         double avgValue = 0, sum = 0;
         if (!timePoints.empty())
         {
@@ -203,7 +225,7 @@ namespace dxrt
             {
                 if (tp.start.time_since_epoch().count() == 0 || tp.end.time_since_epoch().count() == 0 )
                     continue;
-                int duration = chrono::duration_cast<chrono::microseconds>(tp.end-tp.start).count();
+                int duration = std::chrono::duration_cast<std::chrono::microseconds>(tp.end-tp.start).count();
                 if (duration > 0)
                 {
                     durations.push_back(duration);
@@ -219,7 +241,7 @@ namespace dxrt
     {
         if (_enabled == false) return;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (!timePoints.empty())
         {
             auto it = timePoints.find(x);
@@ -238,26 +260,50 @@ namespace dxrt
     {
         if (_enabled == false)
             return;
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         LOG_DXRT_DBG << "profiler" << endl;
         if (!timePoints.empty())
         {
             cout << "  -------------------------------------------------------------------------------" << endl;
             cout << "  |           Name                 |  min (us)    |  max (us)    | average (us) |" << endl;
             cout << "  -------------------------------------------------------------------------------" << endl;
-            map<string, vector<TimePoint>>::iterator iter;
-            for (iter = timePoints.begin(); iter != timePoints.end(); iter++)
+            
+            // Group by base name (before first bracket)
+            std::map<string, std::vector<TimePoint>> groupedTimePoints;
+            std::map<string, vector<TimePoint>>::iterator iter;
+            for (iter = timePoints.begin(); iter != timePoints.end(); ++iter)
             {
-                string name = iter->first;
+                string fullName = iter->first;
+                string baseName = fullName;
+                
+                // Extract base name (before first bracket)
+                size_t bracketPos = fullName.find('[');
+                if (bracketPos != string::npos)
+                {
+                    baseName = fullName.substr(0, bracketPos);
+                }
+                
+                // Add all time points for this base name
+                auto& tps = iter->second;
+                for (auto& tp : tps)
+                {
+                    groupedTimePoints[baseName].push_back(tp);
+                }
+            }
+            
+            // Process grouped time points
+            for (auto& group : groupedTimePoints)
+            {
+                string name = group.first;
                 uint64_t minValue, maxValue;
                 double avgValue = 0, sum = 0;
                 vector<uint64_t> durations;
-                auto tps = iter->second;
+                auto tps = group.second;
                 for (auto &tp : tps)
                 {
                     if ( tp.start.time_since_epoch().count() == 0 || tp.end.time_since_epoch().count() == 0 )
                         continue;
-                    int duration = chrono::duration_cast<chrono::microseconds>(tp.end-tp.start).count();
+                    int duration = std::chrono::duration_cast<std::chrono::microseconds>(tp.end-tp.start).count();
                     if (duration > 0)
                     {
                         durations.emplace_back(duration);
@@ -266,16 +312,22 @@ namespace dxrt
                 }
                 if (durations.empty())
                     continue;
-                minValue = *min_element(durations.begin(), durations.end() );
-                maxValue = *max_element(durations.begin(), durations.end() );
+                minValue = *std::min_element(durations.begin(), durations.end() );
+                maxValue = *std::max_element(durations.begin(), durations.end() );
                 avgValue = sum/durations.size();
                 cout << "  | " << dec << setw(30) << name.substr(0, 28) << " | " << setw(12) << minValue \
                         << " | " << setw(12) << maxValue << " | " << setw(12) << avgValue << " | ";
                 if (showDurations || PROFILER_FORCE_SHOW_DURATIONS)
                 {
+                    int count = 0;
                     for (auto& duration : durations)
                     {
+                        if (count >= 30) {
+                            cout << "...";
+                            break;
+                        }
                         cout << duration << ", ";
+                        count++;
                     }
                 }
                 cout << endl;
@@ -289,7 +341,7 @@ namespace dxrt
         if (_enabled == false)
             return;
 
-        unique_lock<mutex> lk(_lock);
+        std::unique_lock<std::mutex> lk(_lock);
         if (timePoints.empty())
             return;
         Document document;
@@ -328,7 +380,7 @@ namespace dxrt
             outFile.close();
             cout << "Profiler data has been written to " << filename << endl;
         } else {
-            cerr << "Failed to open output file" << endl;
+            LOG_DXRT_ERR("Failed to open output file");
         }
     }
     uint8_t DEBUG_DATA = 0;

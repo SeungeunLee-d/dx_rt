@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 #include "dxrt/common.h"
@@ -39,6 +45,13 @@ class SchedulerService
     int GetProcLoad(int procId);
     void ClearAllLoad();
     void ClearProcLoad(int procId);
+    
+    // Task validity verification callback
+    void SetTaskValidator(std::function<bool(pid_t, int, int)> validator);
+    
+    // Stop inference requests for a specific task
+    void StopTaskInference(pid_t pid, int deviceId, int taskId);
+    void StopAllInferenceForProcess(pid_t pid, int deviceId);
 
  protected:
     virtual void schedule(int deviceId) = 0;
@@ -56,7 +69,9 @@ class SchedulerService
     std::vector<std::shared_ptr<dxrt::ServiceDevice>> _devices;
     std::function<void(const dxrt::dxrt_response_t&, int)> _callBack;
     std::function<void(dxrt::dxrt_server_err_t, uint32_t, int)> _errCallBack;
-
+    
+    // Task validity verification callback
+    std::function<bool(pid_t, int, int)> _taskValidator;
 };
 
 class FIFOSchedulerService : public SchedulerService

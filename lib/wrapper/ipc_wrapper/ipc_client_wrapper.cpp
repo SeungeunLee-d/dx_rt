@@ -1,6 +1,12 @@
 
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "../../include/dxrt/ipc_wrapper/ipc_client_wrapper.h"
 #ifdef __linux__
@@ -10,13 +16,13 @@
 #endif
 #include "dxrt/ipc_wrapper/ipc_message.h"
 
-using namespace dxrt;
-
-const long IPCClientWrapper::MAX_PID = 0x20000000;  // default max pid value
-
 namespace dxrt{
+
+constexpr long IPCClientWrapper::MAX_PID = 0x20000000;  // default max pid value
+
+
     int ipc_callBack(const dxrt::IPCServerMessage& outResponseServerMessage, void* usrData);
-}
+
 
 
 IPCClientWrapper::IPCClientWrapper(IPC_TYPE type, long msgType)
@@ -54,6 +60,7 @@ int32_t IPCClientWrapper::Initialize(bool enableInternalCB)
     {
         if (ret == 0)
         {
+            LOG_DXRT_I_DBG << "Registering internal callback" << std::endl;
             RegisterReceiveCB(ipc_callBack, nullptr);
         }
     }  // register internal callback
@@ -107,3 +114,5 @@ int32_t IPCClientWrapper::Close()
     // SendToServer(clientMessage);
     return _ipcClient->Close();
 }
+
+}  // namespace dxrt

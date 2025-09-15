@@ -1,9 +1,17 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "dxrt/util.h"
 #include "dxrt/datatype.h"
 #include "dxrt/inference_engine.h"
+#include <iostream>
+#include <fstream>
 #include <algorithm>
 #if __cplusplus > 201103L
 #include <random>
@@ -15,6 +23,8 @@
 
 using std::string;
 using std::vector;
+using std::cout;
+using std::endl;
 
 namespace dxrt
 {
@@ -38,10 +48,16 @@ vector<int> RandomSequence(int n)
 
     cout << __func__ << " : ";
     for (int i = 0; i < n; i++)
-        cout << dec << v[i] << " ";
+        cout << std::dec << v[i] << " ";
     cout << endl;
     return v;
 }
+
+#ifdef __linux__
+#define STRTOK_DEFINE strtok_r
+#elif _WIN32
+#define STRTOK_DEFINE strtok_s
+#endif
 
 vector<string> StringSplit(string s, string divid)
 {
@@ -52,10 +68,10 @@ vector<string> StringSplit(string s, string divid)
         char* temp = new char[s.length()];
         strncpy(temp, s.c_str(), s.length());
         char* save_pointer;
-        char* c = strtok_r(temp, divid.c_str(), &save_pointer);
+        char* c = STRTOK_DEFINE(temp, divid.c_str(), &save_pointer);
         while (c) {
             v.push_back(c);
-            c = strtok_r(NULL, divid.c_str(), &save_pointer);
+            c = STRTOK_DEFINE(NULL, divid.c_str(), &save_pointer);
         }
         delete[] temp;
     }
@@ -66,7 +82,7 @@ vector<string> StringSplit(string s, string divid)
     return v;
 }
 
-std::string format_number_with_commas(long long num) {
+std::string format_number_with_commas(int64_t num) {
     std::ostringstream oss;
     try {
         oss.imbue(std::locale(""));
@@ -99,7 +115,7 @@ int GetDataSize_rmapinfo_datatype(deepx_rmapinfo::DataType dType)
             size = 8;
             break;
         default:
-            cout << "Unwanted Data Type is inserted in GetDataSize." << dType << endl;
+            cout << "Unwanted Data Type is inserted in GetDataSize_rmapinfo_datatype." << dType << endl;
             exit(0);
     }
     return size;
@@ -135,32 +151,16 @@ int GetDataSize_Datatype(DataType dType)
             size = 256;
             break;
         default:
-            cout << "Unwanted Data Type is inserted in GetDataSize." << dType << endl;
+            cout << "Unwanted Data Type is inserted in GetDataSize_Datatype." << dType << endl;
             exit(0);
     }
     return size;
 }
 
-vector<int> GetShape(deepx_rmapinfo::Shapes shape, deepx_rmapinfo::DataFormat dFormat)
-{
-    //TODO: deepx_rmapinfo::Shapes use 64bit integer for its shape,
-    //consider return type change from vector<int> to vector<int64_t>
-    if (dFormat == deepx_rmapinfo::DataFormat::NHWd)
-    {
-        vector<int> shapes{static_cast<int>(shape.shape(0)), 1, static_cast<int>(shape.shape(1)), static_cast<int>(shape.shape(2))};
-        return shapes;
-    }
-    else
-    {
-        // deepx_rmapinfo::DataFormat::NHWCd
-        vector<int> shapes{static_cast<int>(shape.shape(0)), static_cast<int>(shape.shape(3)), static_cast<int>(shape.shape(1)), static_cast<int>(shape.shape(2))};
-        return shapes;
-    }
-}
 int DataFromFile(string f, void *d)
 {
     LOG_DXRT_DBG << f << " -> " << d << endl;
-    ifstream in(f, ifstream::binary);
+    std::ifstream in(f, std::ifstream::binary);
     if (in)
     {
         in.clear();
@@ -182,7 +182,7 @@ void DataFromFile(string f, void *d, unsigned int size)
 }
 uint32_t SizeFromFile(string f)
 {
-    ifstream in(f, ifstream::binary);
+    std::ifstream in(f, std::ifstream::binary);
     uint32_t size = 0;
     if (in)
     {
@@ -348,7 +348,7 @@ void MemFree(void **p)
     }
 }
 
-ostream& operator<<(ostream& os, const Processor& processor)
+std::ostream& operator<<(std::ostream& os, const Processor& processor)
 {
     switch (processor)
     {
@@ -369,8 +369,8 @@ void DisplayCountdown(int seconds, string str)
 {
     cout.sync_with_stdio(false);
     while (seconds > 0) {
-        cout << "\r" << str << "(" << seconds << " seconds remaining) " << flush;
-        std::this_thread::sleep_for(chrono::seconds(1));
+        cout << "\r" << str << "(" << seconds << " seconds remaining) " << std::flush;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
 //#ifdef __linux__
 //        sleep(1);
 //#elif _WIN32

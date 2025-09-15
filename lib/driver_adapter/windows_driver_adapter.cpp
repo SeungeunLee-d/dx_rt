@@ -1,8 +1,12 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
-// #include <cstdint>
-// #include <cstdio>
 #ifdef _WIN32 // all or nothing
 
 #include "dxrt/common.h"
@@ -34,7 +38,7 @@ int32_t WindowsDriverAdapter::IOControl(dxrt_cmd_t request, void* data, uint32_t
 {
     OVERLAPPED overlappedSend1 = {};
     overlappedSend1.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
-    int ret;
+    int ret = 0;
     dxrt_message_t msg;
     msg.cmd = static_cast<int32_t>(request);
     msg.sub_cmd = static_cast<int32_t>(sub_cmd),

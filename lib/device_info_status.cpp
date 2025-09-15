@@ -1,10 +1,17 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "dxrt/device_info_status.h"
 #include "dxrt/device.h"
 #include "dxrt/device_util.h"
 #include "dxrt/exception/exception.h"
+#include "dxrt/map_lookup_template.h"
 #include<map>
 #include<iostream>
 #include<iomanip>
@@ -19,28 +26,12 @@ using pair_type = std::pair<int, const char*>;
 
 constexpr std::array<pair_type, 2> device_types = {{{0, "ACC"}, {1, "STD"}}};
 
-constexpr std::array<pair_type, 2> device_type_words = {{{0, "Accelator"}, {1, "Standalone"}}};
-constexpr std::array<pair_type, 6> device_variants = {{{100, "L1"}, {101, "L2"}, {102, "L3"}, {103, "L4"},
+constexpr std::array<pair_type, 2> device_type_words = {{{0, "Accelerator"}, {1, "Standalone"}}};
+constexpr std::array<pair_type, 7> device_variants = {{{100, "L1"}, {101, "L2"}, {102, "L3"}, {103, "L4"}, {104, "V3"},
     {200, "M1"}, {202, "M1"}}};
 constexpr std::array<pair_type, 3> board_types = {{{1, "SOM"}, {2, "M.2"}, {3, "H1"}}};
 constexpr std::array<pair_type, 2> memory_types{{{1, "LPDDR4"}, {2, "LPDDR5"}}};
 
-constexpr int CHARBUFFER_SIZE = 128;
-
-// internal helper functions
-template<typename T, size_t size>
-static string map_lookup(const std::array<pair_type, size>& m, T n)
-{
-    int key = static_cast<int>(n);
-    for (const auto& pair : m)
-    {
-        if (pair.first == key)
-            return std::string(pair.second);
-    }
-    char buf[CHARBUFFER_SIZE];
-    snprintf(buf, CHARBUFFER_SIZE, "-ERROR(%d)-", key);
-    return string(buf);
-}
 string convert_capacity(uint64_t n)
 {
     constexpr uint64_t killo = 1024;
@@ -69,8 +60,8 @@ string convert_capacity(uint64_t n)
         value = static_cast<double>(n)/static_cast<double>(killo);
         postfix = "KiB";
     }
-    char buffer[CHARBUFFER_SIZE];
-    snprintf(buffer, CHARBUFFER_SIZE, "%.3g", value);
+    char buffer[dxrt::CHARBUFFER_SIZE];
+    snprintf(buffer, dxrt::CHARBUFFER_SIZE, "%.3g", value);
     return string(buffer)+postfix;
 }
 static string insert_comma(const string& str)

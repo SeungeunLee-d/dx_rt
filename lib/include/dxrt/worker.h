@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 
@@ -12,7 +18,8 @@
 #include <string>
 #include <array>
 #include <unordered_map>
-#include <chrono> 
+#include <chrono>
+#include <ostream>
 #include "dxrt/common.h"
 #include "dxrt/driver.h"
 
@@ -43,6 +50,7 @@ public:
     virtual void Stop();
     void UpdateQueueStats(int queueSize);
     bool isStopped();
+    void UnHold();
 
 protected:
     const std::string& getName() const {return _name;}
@@ -54,6 +62,7 @@ protected:
     std::atomic<bool> _stop {false};
     std::vector<std::thread> _threads;
     bool _useSystemCall = false;;
+    std::atomic<bool> _hold {true};
 
     void InitializeThread();
     float GetAverageLoad();
@@ -104,6 +113,7 @@ public:
     DeviceEventWorker(string name_, Device *device_);
     virtual ~DeviceEventWorker();
     static shared_ptr<DeviceEventWorker> Create(string name_, Device *device_);
+    void ShowPCIEDetails();
 
 private:
     void ThreadWork(int id) override;
@@ -111,21 +121,21 @@ private:
 class CpuHandleWorker : public Worker
 {
 public:
-    CpuHandleWorker(string name_, int numThreads, int initDynamicThreads, CpuHandle *cpuHandle_);
+    CpuHandleWorker(string name_, int numThreads, int initDynamicThreads, CpuHandle *cpuHandle_, size_t device_num);
     virtual ~CpuHandleWorker();
-    static shared_ptr<CpuHandleWorker> Create(string name_, int numThreads, int initDynamicThreads, CpuHandle *cpuHandle_);
+    static shared_ptr<CpuHandleWorker> Create(string name_, int numThreads, int initDynamicThreads, CpuHandle *cpuHandle_, size_t device_num);
     int request(std::shared_ptr<Request> req);
 
 private:
     std::queue<std::shared_ptr<Request>> _queue;
     void ThreadWork(int id) override; 
 
+    size_t _device_num;
     size_t _numThreads;
     size_t _minThreads;
     size_t _maxThreads;
     
     int _initDynamicThreads;
-
 
     std::deque<size_t> _loadHistory;
     size_t _slidingSum = 0;
@@ -137,6 +147,5 @@ private:
 
     std::vector<std::thread> _dynamicThreads;  
     std::atomic<int> _dynamicStopCnt{0};  
-
 };
 } // namespace dxrt

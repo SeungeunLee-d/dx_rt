@@ -1,3 +1,11 @@
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "../../include/dxrt/ipc_wrapper/ipc_server_wrapper.h"
 
@@ -7,8 +15,7 @@
 	#include "windows_pipe/ipc_pipe_server_windows.h"
 #endif
 
-using namespace dxrt;
-
+namespace dxrt{
 
 IPCServerWrapper::IPCServerWrapper(IPC_TYPE type)
 {
@@ -23,13 +30,13 @@ IPCServerWrapper::IPCServerWrapper(IPC_TYPE type)
         _ipcServer = std::make_shared<IPCPipeServerWindows>();
     }
 #endif
-    else 
+    else
     {
         LOG_DXRT_I_ERR("[ERROR] IPCClientWrapper No implementation");
     }
-    
-    
-    //_ipcServer = std::make_shared<IPCServerWindows>();
+
+
+    // _ipcServer = std::make_shared<IPCServerWindows>();
 }
 
 
@@ -43,14 +50,12 @@ IPCServerWrapper::~IPCServerWrapper()
 // return error code
 int32_t IPCServerWrapper::Initialize()
 {
-
     return _ipcServer->Initialize();
 }
 
 // listen
 int32_t IPCServerWrapper::Listen()
 {
-
     return _ipcServer->Listen();
 }
 
@@ -62,32 +67,30 @@ int32_t IPCServerWrapper::Select(int64_t& connectedFd)
 // ReciveFromClient
 int32_t IPCServerWrapper::ReceiveFromClient(IPCClientMessage& clientMessage)
 {
-
     return _ipcServer->ReceiveFromClient(clientMessage);
 }
 
 // SendToClient
 int32_t IPCServerWrapper::SendToClient(IPCServerMessage& serverMessage)
 {
-
     return _ipcServer->SendToClient(serverMessage);
 }
 
 // register receive message callback function
-int32_t IPCServerWrapper::RegisterReceiveCB(std::function<int32_t(IPCClientMessage&,void*,int32_t)> receiveCB, void* usrData)
+int32_t IPCServerWrapper::RegisterReceiveCB(std::function<int32_t(IPCClientMessage&, void*, int32_t)> receiveCB, void* usrData)
 {
     return _ipcServer->RegisterReceiveCB(receiveCB, usrData);
 }
 
-int32_t IPCServerWrapper::RemoveClient(long msgType) // Only for Message Queue (POSIX)
+int32_t IPCServerWrapper::RemoveClient(long msgType)  // Only for Message Queue (POSIX)
 {
-
     return _ipcServer->RemoveClient(msgType);
 }
 
 // Close
 int32_t IPCServerWrapper::Close()
 {
-
     return _ipcServer->Close();
 }
+
+}  // namespace dxrt

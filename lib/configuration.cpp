@@ -1,8 +1,23 @@
 
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ * 
+ * This file uses ONNX Runtime (MIT License) - Copyright (c) Microsoft Corporation.
+ */
+
 #include "dxrt/common.h"
 #include "dxrt/configuration.h"
 #include "dxrt/exception/exception.h"
 #include "dxrt/profiler.h"
+#include "dxrt/device_info_status.h"
+#include "dxrt/device.h"
+#include "dxrt/device_version.h"
+#include "./resource/log_messages.h"
 #include <memory>
 #include <iostream>
 #include <fstream>
@@ -10,6 +25,12 @@
 #include <sstream>
 #include <algorithm>
 #include <atomic>
+#include <thread>
+
+
+#ifdef USE_ORT
+#include <onnxruntime_cxx_api.h>
+#endif // USE_ORT
 
 
 
@@ -55,6 +76,41 @@
 #define SAVE_PROFILER_DATA_DEFAULT_VALUE "off"
 #endif
 
+#ifndef USE_CUSTOM_INTRA_OP_THREADS
+#define USE_CUSTOM_INTRA_OP_THREADS_DEFAULT_VALUE false
+#else
+#define USE_CUSTOM_INTRA_OP_THREADS_DEFAULT_VALUE true
+#endif
+
+#ifndef USE_CUSTOM_INTER_OP_THREADS
+#define USE_CUSTOM_INTER_OP_THREADS_DEFAULT_VALUE false
+#else
+#define USE_CUSTOM_INTER_OP_THREADS_DEFAULT_VALUE true
+#endif
+
+// Convert macro values to strings for default attributes
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
+#ifndef CUSTOM_INTRA_OP_THREADS_COUNT
+#define CUSTOM_INTRA_OP_THREADS_COUNT_DEFAULT_VALUE "1"
+#else
+#define CUSTOM_INTRA_OP_THREADS_COUNT_DEFAULT_VALUE TOSTRING(CUSTOM_INTRA_OP_THREADS_COUNT)
+#endif
+
+#ifndef CUSTOM_INTER_OP_THREADS_COUNT
+#define CUSTOM_INTER_OP_THREADS_COUNT_DEFAULT_VALUE "1"
+#else
+#define CUSTOM_INTER_OP_THREADS_COUNT_DEFAULT_VALUE TOSTRING(CUSTOM_INTER_OP_THREADS_COUNT)
+#endif
+
+#ifdef SHOW_MODEL_INFO_DEFINE
+    #define SHOW_MODEL_INFO_DEFAULT_VALUE true
+#else
+    #define SHOW_MODEL_INFO_DEFAULT_VALUE false
+#endif // SHOW_MODEL_INFO
+
+
 namespace dxrt {
 
     static bool isDebugFlag = DEBUG_DXRT_DEFAULT_VALUE;
@@ -85,6 +141,10 @@ namespace dxrt {
         bool getBoolValue(const std::string& key) const {
             std::string value = getValue(key);
             return (value == "1" || value == "true" || value == "on");
+        }
+
+        bool has(const std::string& key) const {
+            return config.find(key) != config.end();
         }
 
     private:
@@ -133,16 +193,21 @@ namespace dxrt {
         LOG_DXRT_DBG << "configuration constructor" << std::endl;
 
         // default configuration
-        _enableSettings[ITEM::DEBUG] = DXRT_DYNAMIC_CPU_THREAD_DEFAULT_VALUE;
+        _enableSettings[ITEM::DEBUG] = DEBUG_DXRT_DEFAULT_VALUE;
         _enableSettings[ITEM::PROFILER] = USE_PROFILER_DEFAULT_VALUE;
         _enableSettings[ITEM::SERVICE] = USE_SERVICE_DEFAULT_VALUE;
         _enableSettings[ITEM::DYNAMIC_CPU_THREAD] = DXRT_DYNAMIC_CPU_THREAD_DEFAULT_VALUE;
         _enableSettings[ITEM::TASK_FLOW] = SHOW_TASK_FLOW_DEFAULT_VALUE;
         _enableSettings[ITEM::SHOW_THROTTLING] = false;
-        _enableSettings[ITEM::SHOW_PROFILE] = false;
+        _enableSettings[ITEM::SHOW_PROFILE] = USE_PROFILER_DEFAULT_VALUE;
+        _enableSettings[ITEM::SHOW_MODEL_INFO] = SHOW_MODEL_INFO_DEFAULT_VALUE;
+        _enableSettings[ITEM::CUSTOM_INTRA_OP_THREADS] = USE_CUSTOM_INTRA_OP_THREADS_DEFAULT_VALUE;
+        _enableSettings[ITEM::CUSTOM_INTER_OP_THREADS] = USE_CUSTOM_INTER_OP_THREADS_DEFAULT_VALUE;
 
         _attributes[ITEM::PROFILER][ATTRIBUTE::PROFILER_SHOW_DATA] = SHOW_PROFILER_DATA_DEFAULT_VALUE;
         _attributes[ITEM::PROFILER][ATTRIBUTE::PROFILER_SAVE_DATA] = SAVE_PROFILER_DATA_DEFAULT_VALUE;
+        _attributes[ITEM::CUSTOM_INTRA_OP_THREADS][ATTRIBUTE::CUSTOM_INTRA_OP_THREADS_NUM] = CUSTOM_INTRA_OP_THREADS_COUNT_DEFAULT_VALUE;
+        _attributes[ITEM::CUSTOM_INTER_OP_THREADS][ATTRIBUTE::CUSTOM_INTER_OP_THREADS_NUM] = CUSTOM_INTER_OP_THREADS_COUNT_DEFAULT_VALUE;
 
     #ifndef USE_SERVICE
         _isReadonly[ITEM::SERVICE].first = true;
@@ -154,12 +219,30 @@ namespace dxrt {
         LOG_DXRT_DBG << "configuration destructor" << std::endl;
     }
 
-    // example config file
-    // ENABLE_MULTI_PROCESS=ON
-    // ENABLE_PROFILER=ON
-    // PROFILER_SHOW_DATA=OFF
-    // PROFILER_SAVE_DATA=OFF
-    // ENABLE_DYNAMIC_CPU_THREAD=OFF
+    int Configuration::parseClampThreadCount(const std::string& value)
+    {
+        if (value.empty()) {
+            return 1; // default
+        }
+        
+        try {
+            int count = std::stoi(value);
+            // Clamp between 1 and hardware_concurrency()
+            int hw = static_cast<int>(std::thread::hardware_concurrency());
+            int maxThreads = std::max(1, hw);
+            int clamped = std::max(1, std::min(count, maxThreads));
+            
+            if (clamped != count) {
+                LOG_DXRT_DBG << "Thread count clamped from " << count << " to " << clamped 
+                             << " (max: " << maxThreads << ")" << std::endl;
+            }
+            
+            return clamped;
+        } catch (const std::exception& e) {
+            LOG_DXRT_DBG << "Invalid thread count '" << value << "', using default (1): " << e.what() << std::endl;
+            return 1;
+        }
+    }
 
     void Configuration::LoadConfigFile(const std::string& fileName)
     {
@@ -167,25 +250,61 @@ namespace dxrt {
 
         ConfigParser parser(fileName);
 
-        SetEnable(ITEM::DEBUG, parser.getBoolValue("ENABLE_DEBUG"));
-        SetEnable(ITEM::PROFILER, parser.getBoolValue("ENABLE_PROFILER"));
+        // Enable flags: only override defaults if keys exist in config
+        if (parser.has("ENABLE_DEBUG")) {
+            setEnableWithoutLock(ITEM::DEBUG, parser.getBoolValue("ENABLE_DEBUG"));
+        }
+        if (parser.has("USE_PROFILER")) {
+            setEnableWithoutLock(ITEM::PROFILER, parser.getBoolValue("USE_PROFILER"));
+        }
     #ifdef USE_SERVICE
-        SetEnable(ITEM::SERVICE, parser.getBoolValue("ENABLE_MULTI_PROCESS"));
+        if (parser.has("ENABLE_MULTI_PROCESS")) {
+            setEnableWithoutLock(ITEM::SERVICE, parser.getBoolValue("ENABLE_MULTI_PROCESS"));
+        }
     #endif
-        SetEnable(ITEM::DYNAMIC_CPU_THREAD, parser.getBoolValue("ENABLE_DYNAMIC_CPU_THREAD"));
-        SetEnable(ITEM::TASK_FLOW, parser.getBoolValue("ENABLE_TASK_FLOW"));
+        if (parser.has("DXRT_DYNAMIC_CPU_THREAD")) {
+            setEnableWithoutLock(ITEM::DYNAMIC_CPU_THREAD, parser.getBoolValue("DXRT_DYNAMIC_CPU_THREAD"));
+        }
+        if (parser.has("SHOW_TASK_FLOW_INFO")) {
+            setEnableWithoutLock(ITEM::TASK_FLOW, parser.getBoolValue("SHOW_TASK_FLOW_INFO"));
+        }
+        
+        // Only override compile-time defaults if keys are present in config file
+        if (parser.has("USE_CUSTOM_INTRA_OP_THREADS")) {
+            setEnableWithoutLock(ITEM::CUSTOM_INTRA_OP_THREADS, parser.getBoolValue("USE_CUSTOM_INTRA_OP_THREADS"));
+        }
+        if (parser.has("USE_CUSTOM_INTER_OP_THREADS")) {
+            setEnableWithoutLock(ITEM::CUSTOM_INTER_OP_THREADS, parser.getBoolValue("USE_CUSTOM_INTER_OP_THREADS"));
+        }
 
-        _attributes[ITEM::PROFILER][ATTRIBUTE::PROFILER_SHOW_DATA] = parser.getValue("PROFILER_SHOW_DATA");
-        _attributes[ITEM::PROFILER][ATTRIBUTE::PROFILER_SAVE_DATA] = parser.getValue("PROFILER_SAVE_DATA");
+        // Attributes: only override defaults if keys exist in config
+        if (parser.has("ENABLE_SHOW_PROFILER_DATA")) {
+            setAttributeWithoutLock(ITEM::PROFILER, ATTRIBUTE::PROFILER_SHOW_DATA, parser.getValue("ENABLE_SHOW_PROFILER_DATA"));
+        }
+        if (parser.has("ENABLE_SAVE_PROFILER_DATA")) {
+            setAttributeWithoutLock(ITEM::PROFILER, ATTRIBUTE::PROFILER_SAVE_DATA, parser.getValue("ENABLE_SAVE_PROFILER_DATA"));
+        }
+        
+        // Only override compile-time defaults if keys are present in config file
+        if (parser.has("CUSTOM_INTRA_OP_THREADS_COUNT")) {
+            std::string validatedValue = std::to_string(parseClampThreadCount(parser.getValue("CUSTOM_INTRA_OP_THREADS_COUNT")));
+            setAttributeWithoutLock(ITEM::CUSTOM_INTRA_OP_THREADS, ATTRIBUTE::CUSTOM_INTRA_OP_THREADS_NUM, validatedValue);
+        }
+        if (parser.has("CUSTOM_INTER_OP_THREADS_COUNT")) {
+            std::string validatedValue = std::to_string(parseClampThreadCount(parser.getValue("CUSTOM_INTER_OP_THREADS_COUNT")));
+            setAttributeWithoutLock(ITEM::CUSTOM_INTER_OP_THREADS, ATTRIBUTE::CUSTOM_INTER_OP_THREADS_NUM, validatedValue);
+        }
 
     }
-
-
 
     void Configuration::SetEnable(const ITEM item, bool enabled)
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        setEnableWithoutLock(item, enabled);
+    }
 
+    void Configuration::setEnableWithoutLock(const ITEM item, bool enabled)
+    {
         if (_isReadonly[item].first == true)
         {
             throw dxrt::InvalidOperationException("configuration change not allowed");
@@ -208,7 +327,11 @@ namespace dxrt {
     void Configuration::SetAttribute(const ITEM item, const ATTRIBUTE attrib, const std::string& value)
     {
         std::lock_guard<std::mutex> lock(_mutex);
+        setAttributeWithoutLock(item, attrib, value);
+    }
 
+    void Configuration::setAttributeWithoutLock(const ITEM item, const ATTRIBUTE attrib, const std::string& value)
+    {
         if (_isReadonly[item].second[attrib] == true)
         {
             throw dxrt::InvalidOperationException("change configuration not allowed");
@@ -216,7 +339,9 @@ namespace dxrt {
         _attributes[item][attrib] = value;
         if ((attrib == ATTRIBUTE::PROFILER_SAVE_DATA) || (attrib == ATTRIBUTE::PROFILER_SHOW_DATA))
         {
-            Profiler::GetInstance().SetSettings(attrib, value == "ON");
+            const std::string v = toLower(value);
+            const bool on = (v == "1" || v == "true" || v == "on");
+            Profiler::GetInstance().SetSettings(attrib, on);
         }
     }
 
@@ -249,6 +374,28 @@ namespace dxrt {
         return it2->second;
     }
 
+    int Configuration::GetIntAttribute(const ITEM item, const ATTRIBUTE attrib)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+
+        auto it = _attributes.find(item);
+        if (it == _attributes.end())
+        {
+            return 0;
+        }
+        auto it2 = it->second.find(attrib);
+        if (it2 == it->second.end())
+        {
+            return 0;
+        }
+        
+        try {
+            return std::stoi(it2->second);
+        } catch (const std::exception&) {
+            return 0;
+        }
+    }
+
     void Configuration::LockEnable(const ITEM item)
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -259,6 +406,94 @@ namespace dxrt {
             return;
         }
         _isReadonly[item].first = true;
+    }
+
+    std::string Configuration::GetVersion() const
+    {
+        std::string version = DXRT_VERSION;
+        if ( version[0] == 'v' )
+            return version.substr(1);
+
+        return version;
+    }
+
+    std::string Configuration::GetDriverVersion() const
+    {
+        uint32_t rt_driver_version = 0;
+
+        std::vector<std::shared_ptr<dxrt::Device>> devices = CheckDevices();
+        if ( devices.size() > 0 )
+        {
+            dxrt_dev_info_t dev_info = devices[0]->devInfo();
+            rt_driver_version = dev_info.rt_drv_ver;
+        }
+
+        uint32_t major = rt_driver_version / 1000;
+        uint32_t minor = (rt_driver_version / 100) % 10;
+        uint32_t patch = rt_driver_version % 100;
+
+        return  std::to_string(major) + "." +
+                std::to_string(minor) + "." +
+                std::to_string(patch); 
+    }
+
+    std::string Configuration::GetPCIeDriverVersion() const
+    {
+        uint32_t pcie_driver_version = 0;
+
+        std::vector<std::shared_ptr<dxrt::Device>> devices = CheckDevices();
+        if ( devices.size() > 0 )
+        {
+            dxrt_dev_info_t dev_info = devices[0]->devInfo();
+            pcie_driver_version = dev_info.pcie.driver_version;
+        }
+                
+
+        uint32_t major = pcie_driver_version / 1000;
+        uint32_t minor = (pcie_driver_version / 100) % 10;
+        uint32_t patch = pcie_driver_version % 100;
+
+        return  std::to_string(major) + "." +
+                std::to_string(minor) + "." +
+                std::to_string(patch);   
+    }
+
+    std::vector<std::pair<int, std::string>> Configuration::GetFirmwareVersions() const
+    {
+        
+        std::vector<std::pair<int, std::string>> fws;
+
+        std::vector<std::shared_ptr<dxrt::Device>> devices = CheckDevices();
+        if ( devices.size() > 0 )
+        {
+            for(auto& dev : devices)
+            {
+                dxrt_device_info_t device_info = dev->info();
+                //uint16_t firmware_version = 
+                uint32_t major = device_info.fw_ver / 100;
+                uint32_t minor = (device_info.fw_ver / 10) % 10;
+                uint32_t patch = device_info.fw_ver % 10;
+
+                std::string version = std::to_string(major) + "." +
+                                std::to_string(minor) + "." +
+                                std::to_string(patch);
+
+                fws.emplace_back(std::pair<int, std::string>(dev->id(), version));
+            }
+        }
+                
+
+        return fws;
+    }
+
+    std::string Configuration::GetONNXRuntimeVersion() const
+    {
+#ifdef USE_ORT
+        std::string onnx_version = std::string(OrtGetApiBase()->GetVersionString());
+        return onnx_version;
+#else
+        return "0.0.0";
+#endif // USE_ORT
     }
 
 }  // namespace dxrt

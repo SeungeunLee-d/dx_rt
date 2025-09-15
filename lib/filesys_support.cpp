@@ -1,3 +1,12 @@
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
+ 
 #include "dxrt/filesys_support.h"
 #include <cstdlib>
 #include <iostream>
@@ -10,7 +19,10 @@
     #include <windows.h>
 #endif  // __linux__
 
-using namespace std;
+using std::cout;
+using std::endl;
+using std::string;
+
 
 
 string dxrt::getCurrentPath()
@@ -145,6 +157,6 @@ bool dxrt::fileExists(const string& path)
 string dxrt::getExtension(const string& path)
 {
     size_t pos = path.find_last_of(".");
-    if(pos == string::npos) return "";
+    if (pos == string::npos) return "";
     return path.substr(pos+1);
 }

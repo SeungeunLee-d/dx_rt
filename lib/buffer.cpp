@@ -1,15 +1,21 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #include "dxrt/buffer.h"
+#include <vector>
 
-using namespace std;
 
 namespace dxrt {
 
 Buffer::Buffer(uint32_t size) : _size(size)
 {
-    _mem = vector<uint8_t>(_size, 0);
+    _mem = std::vector<uint8_t>(_size, 0);
     _start = reinterpret_cast<uint64_t>(_mem.data());
     _cur = _start;
     _end = _start + _size;

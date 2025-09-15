@@ -1,5 +1,11 @@
-// Copyright (c) 2022 DEEPX Corporation. All rights reserved.
-// Licensed under the MIT License.
+/*
+ * Copyright (C) 2018- DEEPX Ltd.
+ * All rights reserved.
+ *
+ * This software is the property of DEEPX and is provided exclusively to customers 
+ * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * Unauthorized sharing or usage is strictly prohibited by law.
+ */
 
 #pragma once
 
@@ -53,13 +59,18 @@
 #include <functional>
 #include <assert.h>
 #include <numeric>
+#include <cstdlib> 
 #include "dxrt/gen.h"
 #include <mutex>
 #if __cplusplus >= 201402L
 #include <shared_mutex>
 #endif
 
-#define DXRT_TASK_MAX_LOAD    (6)
+#ifndef DEBUG_DXRT
+#define DEBUG_DXRT 0
+#endif
+
+#define DXRT_TASK_MAX_LOAD_DEFAULT    (6)
 
 #if DEBUG_DXRT
 #define LOG_DBG(x) std::cout<<"[DXRT] "<< x << std::endl;
@@ -81,6 +92,8 @@
 #define LOG_DXRT     std::cout<<"[DXRT]["<< __func__ << "] "
 #define LOG_DXRT_DBG if(DEBUG_DXRT) std::cout<<"[DXRT]["<< __func__ << "] " 
 #define LOG_DXRT_ERR(x) std::cout<<"[DXRT][Error] "<< x << std::endl;
+#define LOG_DXRT_WARN(x) std::cout<<"[DXRT][Warning] "<< x << std::endl;
+#define LOG_DXRT_INFO(x) std::cout<<"[DXRT][Info] "<< x << std::endl;
 
 #define LOG_DXRT_S        std::cout<<"[DXRT_SVC]["<< __func__ << "] "
 #define LOG_DXRT_S_DBG    if(DEBUG_DXRT) std::cout<<"[DXRT_SVC]["<< __func__ << "] " 
@@ -159,5 +172,27 @@ T vectorProduct(const std::vector<T>& v)
     using UniqueLock = std::unique_lock<std::mutex>;
 #endif
 
+
+inline int GetTaskMaxLoad() {
+    static int cached_value = -1;
+    if (cached_value == -1) {
+        const char* env_value = std::getenv("DXRT_TASK_MAX_LOAD");
+        if (env_value != nullptr) {
+            int env_int = std::atoi(env_value);
+            if (env_int > 0 && env_int <= 100) { 
+                cached_value = env_int;
+                std::cout << "[DXRT] Using DXRT_TASK_MAX_LOAD=" << cached_value << " from environment" << std::endl;
+            } else {
+                cached_value = DXRT_TASK_MAX_LOAD_DEFAULT;
+                std::cout << "[DXRT] Invalid DXRT_TASK_MAX_LOAD value, using default=" << cached_value << std::endl;
+            }
+        } else {
+            cached_value = DXRT_TASK_MAX_LOAD_DEFAULT;
+        }
+    }
+    return cached_value;
+}
+
+#define DXRT_TASK_MAX_LOAD GetTaskMaxLoad()
 
 } // namespace dxrt
