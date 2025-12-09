@@ -2,8 +2,8 @@
  * Copyright (C) 2018- DEEPX Ltd.
  * All rights reserved.
  *
- * This software is the property of DEEPX and is provided exclusively to customers 
- * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * This software is the property of DEEPX and is provided exclusively to customers
+ * who are supplied with DEEPX NPU (Neural Processing Unit).
  * Unauthorized sharing or usage is strictly prohibited by law.
  */
 
@@ -27,6 +27,8 @@ namespace dxrt {
 
 std::vector<MemoryService*> MemoryService::_instances;
 
+static constexpr bool ENABLE_MEMORY_TRACE_LOGS = false;
+
 MemoryService* MemoryService::getInstance(int deviceId)
 {
     if (_instances.empty())
@@ -39,9 +41,14 @@ MemoryService* MemoryService::getInstance(int deviceId)
         for (auto device : device_list)
         {
             dxrt_device_info_t info = device->info();
-            // std::cout << "device insert:" << device->id() << endl;
+            if (info.mem_size < 1024*1024)
+            {
+                LOG_DXRT_S_ERR("device " << device->id() << " memory size info get error:" << info.mem_size);
+                DXRT_ASSERT(false, "device memory size info error");
+            }
             _instances.push_back(new MemoryService(info.mem_addr, info.mem_size));
             LOG_DXRT_S_DBG << "device insert:" << device->id() << endl;
+            _instances.back()->_deviceId = device->id();
         }
         LOG_DXRT_S_DBG << "device count:" << _instances.size() << endl;
     }
@@ -64,6 +71,9 @@ MemoryService::MemoryService(uint64_t start, uint64_t size)
 
 uint64_t MemoryService::Allocate(uint64_t size, pid_t pid)
 {
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Requesting allocation of size " << size << " for PID " << pid << endl;
+    }
     std::lock_guard<std::mutex> lk(_lock);
 
     // Quick pre-check for large allocations only (>100MB)
@@ -76,6 +86,9 @@ uint64_t MemoryService::Allocate(uint64_t size, pid_t pid)
     }
 
     uint64_t addr = _mem->Allocate(size);
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Allocated address " << hex << addr << dec << " of size " << size << " for PID " << pid << endl;
+    }
 
     if (addr != static_cast<uint64_t>(-1)) {
         // Track legacy allocations for backwards compatibility
@@ -116,6 +129,10 @@ uint64_t MemoryService::BackwardAllocate(uint64_t size, pid_t pid)
 
 bool MemoryService::Deallocate(uint64_t addr, pid_t pid)
 {
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Requesting deallocation of address " << hex << addr << dec << " for PID " << pid << endl;
+    }
+
     std::lock_guard<std::mutex> lk(_lock);
     auto it1 = _legacyAllocInfo.find(pid);
     if (it1 == _legacyAllocInfo.end())
@@ -234,6 +251,9 @@ uint64_t MemoryService::AllocateForTask(uint64_t size, pid_t pid, int taskId)
 
 uint64_t MemoryService::BackwardAllocateForTask(uint64_t size, pid_t pid, int taskId)
 {
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Requesting backward allocation of size " << size << " for Task " << taskId << ", PID " << pid << endl;
+    }
     std::lock_guard<std::mutex> lk(_lock);
 
     // Enhanced logging for backward memory allocation
@@ -247,13 +267,16 @@ uint64_t MemoryService::BackwardAllocateForTask(uint64_t size, pid_t pid, int ta
 
     // Quick pre-check for large allocations only (>100MB)
     if (size > MemoryConfig::LARGE_ALLOCATION_THRESHOLD && !_mem->CanAllocateContiguous(size)) {
-        LOG_DXRT_S_ERR("Cannot backward allocate " + std::to_string(size / (1024*1024)) + "MB for Task " + std::to_string(taskId) + 
+        LOG_DXRT_S_ERR("Cannot backward allocate " + std::to_string(size / (1024*1024)) + "MB for Task " + std::to_string(taskId) +
                        " - Free: " + std::to_string(fragInfo.total_free_size / (1024*1024)) + "MB, " +
                        "Largest: " + std::to_string(fragInfo.largest_free_block / (1024*1024)) + "MB");
         return static_cast<uint64_t>(-1);
     }
 
     uint64_t addr = _mem->BackwardAllocate(size);
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Backward allocated address " << hex << addr << dec << " of size " << size << " for Task " << taskId << ", PID " << pid << endl;
+    }
 
     if (addr != static_cast<uint64_t>(-1)) {
         // Use task-based tracking only (remove double tracking)
@@ -282,6 +305,9 @@ uint64_t MemoryService::BackwardAllocateForTask(uint64_t size, pid_t pid, int ta
 
 bool MemoryService::DeallocateTask(pid_t pid, int taskId)
 {
+    if (ENABLE_MEMORY_TRACE_LOGS) {
+        LOG_DXRT_S << "Requesting deallocation of memory for Task " << taskId << ", PID " << pid << endl;
+    }
     std::lock_guard<std::mutex> lk(_lock);
 
     auto pidIt = _taskAllocInfo.find(pid);
@@ -381,10 +407,16 @@ bool MemoryService::IsTaskValid(pid_t pid, int taskId) const
 
     auto pidIt = _taskAllocInfo.find(pid);
     if (pidIt == _taskAllocInfo.end()) {
+
+        LOG_DXRT_S_ERR("Process " << pid << " device " << _deviceId << " task " << taskId << ": not found in MemoryService TaskAllocInfo");
         return false;
     }
 
-    return pidIt->second.find(taskId) != pidIt->second.end();
+    if (pidIt->second.find(taskId) == pidIt->second.end())
+    {
+        LOG_DXRT_S_ERR("Process " << pid << " device " << _deviceId << " task " << taskId << ": not found in MemoryService pidIt");
+    }
+    return true;
 }
 
 // Memory fragmentation prevention and cleanup function

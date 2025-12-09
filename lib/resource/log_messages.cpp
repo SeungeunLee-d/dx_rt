@@ -26,26 +26,17 @@ namespace dxrt {
 
     std::string LogMessages::NotSupported_ModelFileFormatVersion(
         int currentFileFormatVersion, 
-        int requiredFileFormatVersion)
-    {
-        return 
-                "Model file format version "
-                + std::to_string(currentFileFormatVersion)
-                + " is not supported.\nPlease use model file version "
-                + std::to_string(requiredFileFormatVersion)
-                + " or higher.";
-    }
-
-    std::string LogMessages::NotSupported_ModelFileFormatMaxVersion(
-        int currentFileFormatVersion, 
+        int requiredFileFormatMinVersion,
         int requiredFileFormatMaxVersion)
     {
         return 
                 "Model file format version "
                 + std::to_string(currentFileFormatVersion)
-                + " is not supported.\nPlease use model file version "
+                + " is not supported.\nPlease use model file version between "
+                + std::to_string(requiredFileFormatMinVersion)
+                + " and "
                 + std::to_string(requiredFileFormatMaxVersion)
-                + " or lower.";
+                + ".";
     }
 
     std::string LogMessages::ConvertIntToVersion(int version)
@@ -241,6 +232,60 @@ namespace dxrt {
     std::string LogMessages::Profiler_MemoryUsage(uint64_t current_memory)
     {
         return "Profiler warning: Using over " + std::to_string(current_memory/1024/1024) + "MB for profiling data"; 
+    }
+
+    std::string LogMessages::Device_FailToInitialize(int id)
+    {
+        return "Fail to initialize device " + std::to_string(id);
+    }
+
+    std::string LogMessages::Device_DeviceErrorEvent(int errorCode)
+    {
+        return "Device error event occurred, errorCode=" + std::to_string(errorCode);
+    }
+
+    std::string LogMessages::RuntimeDispatch_FailToReadOutput(int errorCode, int requestId, int channelId)
+    {
+        return "Fail to read output, errno=" + std::to_string(errorCode) 
+                + ", reqId=" + std::to_string(requestId) 
+                + ", ch:" + std::to_string(channelId);
+    }
+
+    std::string LogMessages::RuntimeDispatch_FailToWriteInput(int errorCode, int requestId, int channelId)
+    {
+        return "Fail to write input, errno=" + std::to_string(errorCode)
+                + ", reqId=" + std::to_string(requestId)
+                + ", ch:" + std::to_string(channelId);
+    }
+
+    std::string LogMessages::RuntimeDispatch_RanOutOfNPUMemory()
+    {
+        return "Ran out of NPU memory";
+    }
+
+    std::string LogMessages::RuntimeDispatch_RanOutOfNPUMemoryForTask(int taskId)
+    {
+        return "Ran out of NPU memory for task id=" + std::to_string(taskId);
+    }
+
+    std::string LogMessages::RuntimeDispatch_DeviceRecovery(int deviceId, const std::string& type)
+    {
+        return "Device recovery occurred: Device-ID=" + std::to_string(deviceId) + " " + type;
+    }
+
+    std::string LogMessages::RuntimeDispatch_DeviceEventError(int deviceId, const std::string& errCodeStr)
+    {
+        return "Device I/O event error occurred: Device-ID=" + std::to_string(deviceId) + " " + errCodeStr;
+    }
+
+    std::string LogMessages::RuntimeDispatch_ThrottlingNotice(int deviceId, int npuId, const std::string& mesg, int temperature)
+    {
+        return "Throttling notice: Device-ID=" + std::to_string(deviceId) + " NPU-ID=" + std::to_string(npuId) + " temperature is " + std::to_string(temperature) + "°C. " + mesg;
+    }
+
+    std::string LogMessages::RuntimeDispatch_ThrottlingEmergency(int deviceId, int npuId, const std::string& emergencyCodeStr)
+    {
+        return "Throttling emergency occurred: Device-ID=" + std::to_string(deviceId) + " NPU-ID=" + std::to_string(npuId) + ". " + emergencyCodeStr;
     }
 
 } // namespace dxrt

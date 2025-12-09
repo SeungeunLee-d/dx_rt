@@ -2,8 +2,8 @@
  * Copyright (C) 2018- DEEPX Ltd.
  * All rights reserved.
  *
- * This software is the property of DEEPX and is provided exclusively to customers 
- * who are supplied with DEEPX NPU (Neural Processing Unit). 
+ * This software is the property of DEEPX and is provided exclusively to customers
+ * who are supplied with DEEPX NPU (Neural Processing Unit).
  * Unauthorized sharing or usage is strictly prohibited by law.
  */
 
@@ -14,6 +14,9 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include "dxrt/device_pool.h"
+#include "dxrt/device_core.h"
+#include "util/unicode_literal_support.h"
 
 namespace dxrt {
 
@@ -22,23 +25,28 @@ NpuMonitor* NpuMonitor::s_instance = nullptr;
 NpuMonitor::NpuMonitor()
 : _running(false), _currentPage(0), _currentView(ViewState::MAIN)
 {
-    std::vector<std::shared_ptr<dxrt::Device>> rawDevices = CheckDevices(SkipMode::COMMON_SKIP, dxrt::dxrt_ident_sub_cmd_t::DX_IDENTIFY_NONE);
+    DevicePool::GetInstance().InitCores();
+    int deviceCount = DevicePool::GetInstance().GetDeviceCount();
+
+    //std::vector<std::shared_ptr<dxrt::Device>> rawDevices = CheckDevices(SkipMode::COMMON_SKIP, dxrt::dxrt_ident_sub_cmd_t::DX_IDENTIFY_NONE);
 
     _devices.clear();
-    _devices.reserve(rawDevices.size());
+    _devices.reserve(deviceCount);
 
     uint8_t index = 0;
 
-    for (const auto& device : rawDevices)
+    for (int i = 0; i < deviceCount; i++)
     {
-        _devices.emplace_back(std::make_shared<dxrt::NpuDevice>(index++, device, _ipcClient));
+        auto deviceCore = DevicePool::GetInstance().GetDeviceCores(i);
+        _devices.emplace_back(std::make_shared<dxrt::NpuDevice>(index++, deviceCore, _ipcClient));
     }
 
     _totalDeviceCount = _devices.size();
 
     if (_totalDeviceCount == 0)
     {
-        _dev.rt_drv_ver = 0;
+        _dev.rt_drv_ver.driver_version = 0;
+        _dev.rt_drv_ver.driver_version_suffix[0] = 0;
         _dev.pcie.driver_version = 0;
     }
 
@@ -46,7 +54,6 @@ NpuMonitor::NpuMonitor()
     {
         _dev = _devices[0]->GetDevInfo();
     }
- 
 }
 
 void NpuMonitor::Initialize(Renderer& renderer)
@@ -225,7 +232,7 @@ MonitorViewModel NpuMonitor::createMonitorViewModel()
 
     std::string version_string;
     version_string = "DX-RT: " + std::string(DXRT_VERSION) + \
-            "\t  NPU Device driver: v" + NpuDeviceFormatter::FormatRTDriverVersion(_dev.rt_drv_ver) + \
+            "\t  NPU Device driver: v" + NpuDeviceFormatter::FormatRTDriverVersion(_dev.rt_drv_ver.driver_version) + \
             "\tDX-TOP: v" + std::string(DX_TOP_VERSION);
 
     view_model.headerLines.push_back(version_string);
@@ -394,7 +401,7 @@ CoreViewModel NpuMonitor::createCoreViewModel(const NpuCore& core)
         false
     };
 
-    
+
     //Utilization color logic here
 
     view_models.fields.push_back(std::move(utilization_field));
@@ -403,7 +410,7 @@ CoreViewModel NpuMonitor::createCoreViewModel(const NpuCore& core)
     //Temperature
     int32_t temperature = core.GetTemperature();
     std::ostringstream temperature_stream;
-    temperature_stream << std::setw(3) << core.GetTemperature() << " °C";
+    temperature_stream << std::setw(3) << core.GetTemperature() << convertLiteralUTF8(u8" \u00B0C");
 
     Field temperature_field{
         "Temp",

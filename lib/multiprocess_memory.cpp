@@ -13,6 +13,8 @@
 #include "dxrt/multiprocess_memory.h"
 #include "dxrt/ipc_wrapper/ipc_message.h"
 #include "dxrt/exception/exception.h"
+#include "dxrt/runtime_event_dispatcher.h"
+#include "../resource/log_messages.h"
 
 #ifdef __linux__
 #include <sys/socket.h>
@@ -88,7 +90,23 @@ namespace dxrt
             }
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
-        DXRT_ASSERT(isDone, "ran out of NPU memory");
+        
+        //DXRT_ASSERT(isDone, "ran out of NPU memory");
+        if (!isDone) {
+            RuntimeEventDispatcher::GetInstance().DispatchEvent(
+                RuntimeEventDispatcher::LEVEL::CRITICAL, 
+                RuntimeEventDispatcher::TYPE::DEVICE_MEMORY, 
+                RuntimeEventDispatcher::CODE::MEMORY_OVERFLOW, 
+                LogMessages::RuntimeDispatch_RanOutOfNPUMemory());
+        }
+        /* TODO
+        // Fix: Return -1 instead of aborting to allow retry with smaller buffer count
+        if (!isDone) {
+            LOG_DXRT_ERR("Failed to allocate NPU memory after retries");
+            return static_cast<uint64_t>(-1);
+        }
+        */
+        
         LOG_DXRT_DBG << std::hex << serverMessage.data << std::dec << " is allocated from service\n";
         DXRT_ASSERT(static_cast<int64_t>(serverMessage.data) != -1, "allocate error");
         // DXRT_ASSERT(static_cast<int64_t>(serverMessage.data) != 0,"allocate error");
@@ -187,7 +205,23 @@ namespace dxrt
             }
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
-        DXRT_ASSERT(isDone, "ran out of NPU memory for Task " + std::to_string(taskId));
+        
+        // DXRT_ASSERT(isDone, "ran out of NPU memory for Task " + std::to_string(taskId));
+        if (!isDone) {
+            RuntimeEventDispatcher::GetInstance().DispatchEvent(
+                RuntimeEventDispatcher::LEVEL::CRITICAL, 
+                RuntimeEventDispatcher::TYPE::DEVICE_MEMORY, 
+                RuntimeEventDispatcher::CODE::MEMORY_OVERFLOW, 
+                LogMessages::RuntimeDispatch_RanOutOfNPUMemoryForTask(taskId));
+        }
+        /* TODO
+        // Fix: Return -1 instead of aborting to allow retry with smaller buffer count
+        if (!isDone) {
+            LOG_DXRT_ERR("Failed to allocate NPU memory for Task " + std::to_string(taskId) + " after retries");
+            return static_cast<uint64_t>(-1);
+        }
+        */
+        
         LOG_DXRT_DBG << std::hex << serverMessage.data << std::dec << " is allocated from service for Task " << taskId << "\n";
         DXRT_ASSERT(static_cast<int64_t>(serverMessage.data) != -1, "allocate error for Task " + std::to_string(taskId));
         return serverMessage.data;

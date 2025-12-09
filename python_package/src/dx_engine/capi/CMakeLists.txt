@@ -4,9 +4,13 @@ project(pydxrt)
 set(target _pydxrt)
 
 file(REMOVE "_pydxrt.so")
+if (MSVC)
+if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8) # detect x64 using pointer size 
+    message(FATAL_ERROR "Please use Visual Studio x64 Native Tools Command Prompt")
+endif()
+endif()
 
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
-
 set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
 
     execute_process(
@@ -22,7 +26,6 @@ set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
     )
 
     message(STATUS ${LS_VALUE})
-    # Python 버전을 "X.Y" 형식으로 설정
     set(PYBIND11_PYTHON_VERSION "${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
     message(STATUS "Found Python: ${Python_EXECUTABLE} (version ${PYBIND11_PYTHON_VERSION})")
 
@@ -44,8 +47,14 @@ set(PYDXRT_DIR ${CMAKE_CURRENT_LIST_DIR})
 
 set(BINDING_CPP_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
-find_package(pybind11 REQUIRED)
 
+
+include_directories(
+  ${CMAKE_SOURCE_DIR}/../../../../lib/include
+  ${CMAKE_SOURCE_DIR}/../../../../extern/include
+)
+
+find_package(pybind11 REQUIRED)
 
 
 pybind11_add_module( ${target} 
@@ -54,8 +63,14 @@ target_include_directories(${target} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/include
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../../extern/include
 )
+if (Python_EXECUTABLE MATCHES "pypy")
+    # PyPy임을 나타내는 C++ 매크로를 정의합니다.
+    target_compile_definitions(${target} PRIVATE PYBIND11_IS_PYPY)
+endif()
+
+#target_link_libraries(${target} PRIVATE ${CMAKE_SOURCE_DIR}/../../../build_dxrt/Release/dxrt.lib ${link_libs})
 if(MSVC)
-    target_link_libraries(${target} PRIVATE dxrt ${link_libs})
+    target_link_libraries(${target} PRIVATE ${link_libs})
 else()
     target_link_libraries(${target} PRIVATE dxrt pthread ${link_libs})
 endif()

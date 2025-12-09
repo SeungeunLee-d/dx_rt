@@ -13,7 +13,7 @@
 #include <string>
 
 namespace dxrt {
-    class LogMessages
+    class DXRT_API LogMessages
     {
     public:
         static std::string ConvertIntToVersion(int version);
@@ -22,9 +22,8 @@ namespace dxrt {
                                                             const std::string& requiredCompilerVersion);
 
         static std::string NotSupported_ModelFileFormatVersion(int currentFileFormatVersion,
-                                                            int requiredFileFormatVersion);
-        static std::string NotSupported_ModelFileFormatMaxVersion(int currentFileFormatVersion,
-                                                            int requiredMaxFileFormatVersion);
+                                                            int requiredFileFormatMinVersion,
+                                                            int requiredFileFormatMaxVersion);
 
         static std::string NotSupported_DeviceDriverVersion(int currentDriverVersion, int requiredDriverVersion);
         static std::string NotSupported_PCIEDriverVersion(int currentDriverVersion, int requiredDriverVersion);
@@ -62,6 +61,20 @@ namespace dxrt {
         static std::string CLI_UpdateCondition(const std::string& version);
 
         static std::string Profiler_MemoryUsage(uint64_t current_memory);
+
+        static std::string Device_FailToInitialize(int id);
+        static std::string Device_DeviceErrorEvent(int errorCode);
+
+        // Runtime error messages for RuntimeErrorDispatcher
+        static std::string RuntimeDispatch_FailToReadOutput(int errorCode, int requestId, int channelId);
+        static std::string RuntimeDispatch_FailToWriteInput(int errorCode, int requestId, int channelId);
+        static std::string RuntimeDispatch_RanOutOfNPUMemory();
+        static std::string RuntimeDispatch_RanOutOfNPUMemoryForTask(int taskId);
+        static std::string RuntimeDispatch_DeviceRecovery(int deviceId, const std::string& type);
+        static std::string RuntimeDispatch_DeviceEventError(int deviceId, const std::string& errCodeStr);
+        static std::string RuntimeDispatch_ThrottlingNotice(int deviceId, int npuId, const std::string& mesg, int temperature);
+        static std::string RuntimeDispatch_ThrottlingEmergency(int deviceId, int npuId, const std::string& emergencyCodeStr);
+        
     };
 
 }  // namespace dxrt

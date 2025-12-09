@@ -16,8 +16,40 @@
 #include "dxrt/profiler.h"
 #include "dxrt/util.h"
 #include "dxrt/buffer.h"
+#include <limits>
+#include <cstdint>
+#include <sstream>
 
 
+
+namespace {
+
+// Convert layout metadata into legacy format field expected by firmware (layout-1 mapping)
+int8_t LayoutToLegacyFormat(deepx_rmapinfo::Layout layout)
+{
+    const int layoutValue = static_cast<int>(layout);
+    return layoutValue > 0 ? static_cast<int8_t>(layoutValue - 1) : 0;
+}
+
+// Map compile-time PPU type flag to the corresponding runtime layout descriptor
+deepx_rmapinfo::Layout LayoutFromPpuType(int ppuType)
+{
+    using deepx_rmapinfo::Layout;
+    switch (ppuType)
+    {
+        case 0:
+        case 1:
+            return Layout::PPU_YOLO;
+        case 3:
+            return Layout::PPU_FD;
+        case 2:
+            return Layout::PPU_POSE;
+        default:
+            return Layout::LAYOUT_NONE;
+    }
+}
+
+}
 
 namespace dxrt {
 
@@ -26,13 +58,16 @@ TaskData::TaskData(int id_, std::string name_, rmapinfo info_)
 {
 }
 
-void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_)
+void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_, bool hasPpuBinary)
 {
     using std::endl;
     using std::vector;
 
-    int64_t last_output_lower_bound = _info.model_memory().output().size();
+    // Fix: Initialize with max value to find minimum offset correctly
+    int64_t last_output_lower_bound = std::numeric_limits<int64_t>::max();
     int64_t last_output_upper_bound = 0;
+    bool has_valid_output = false;  // Track if we have any valid outputs
+    
     _processor = Processor::NPU;
     
     _numInputs = _info.inputs().size();
@@ -90,30 +125,98 @@ void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_)
             {
                 encoded_shape.emplace_back(tensor_info.shape_encoded()[j]);
             }
-            _outputShapes.emplace_back(shape);
-            _outputOffsets.emplace_back(orginal_tensor_offset);
-            orginal_tensor_offset += orginal_tensor_size;
-            _encodedOutputOffsets.emplace_back(tensor_offset);
+
+            has_valid_output = true;
             if (last_output_lower_bound > tensor_offset)
                 last_output_lower_bound = tensor_offset;
             if (last_output_upper_bound < tensor_offset + tensor_info.memory().size())
                 last_output_upper_bound = tensor_offset + tensor_info.memory().size();
-            _outputNames.emplace_back(tensor_info.name());
+            
             _npuOutputTensorInfos.emplace_back(tensor_info);
+
+            _outputNames.emplace_back(tensor_info.name());
+            _outputShapes.emplace_back(shape);
 
             _encodedOutputNames.emplace_back(tensor_info.name_encoded());
             _encodedOutputShapes.emplace_back(encoded_shape);
             _encodedOutputSizes.emplace_back(tensor_info.memory().size());
 
+            _outputOffsets.emplace_back(orginal_tensor_offset);
+            orginal_tensor_offset += orginal_tensor_size;
+
+            if (_info.outputs()[i].memory().type() == deepx_rmapinfo::MemoryType::ARGMAX) {
+                _encodedOutputOffsets.emplace_back(_info.model_memory().output().size()); // temporary offset
+                continue;
+            }
+            else if (_info.outputs()[i].memory().type() == deepx_rmapinfo::MemoryType::PPU) {
+                // PPU outputs have dynamic size (size=0 in rmap_info), skip bound calculation
+                _encodedOutputOffsets.emplace_back(0); // PPU output offset managed separately
+                continue;
+            }
+            else
+            {
+                _encodedOutputOffsets.emplace_back(tensor_offset);
+
+                if (last_output_lower_bound > tensor_offset)
+                    last_output_lower_bound = tensor_offset;
+                if (last_output_upper_bound < tensor_offset + tensor_info.memory().size())
+                    last_output_upper_bound = tensor_offset + tensor_info.memory().size();
+            }
         }
-    
+
+        // If no valid outputs exist, set to 0
+        if (!has_valid_output || last_output_lower_bound == std::numeric_limits<int64_t>::max()) {
+            last_output_lower_bound = 0;
+        }
+        
+        // Validate the calculated bounds
+        if (last_output_lower_bound < 0 || last_output_upper_bound < last_output_lower_bound) {
+            std::stringstream err_msg;
+            err_msg << "Invalid output memory bounds calculated: lower=" << last_output_lower_bound 
+                    << ", upper=" << last_output_upper_bound;
+            LOG_DXRT_ERR(err_msg.str());
+            throw std::runtime_error("Invalid output memory bounds");
+        }
+
         // After last_output_lower_bound is determined, subtract it from all values in _encodedOutputOffsets.
         for(auto &offset : _encodedOutputOffsets)
         {
-            offset -= last_output_lower_bound;
+            
+            
+            // Sanity check: offset should not be negative after normalization (but offset is int64_t which can be negative)
+            if (offset < static_cast<uint64_t>(last_output_lower_bound))
+            {
+                std::stringstream err_msg;
+                err_msg << "Negative offset after normalization: " << offset;
+                LOG_DXRT_ERR(err_msg.str());
+                throw std::runtime_error("Invalid offset normalization");
+            }
+            else
+            {
+                offset -= last_output_lower_bound;
+            }
         }
     }
+    
+    // Calculate encoded output size with validation
     _encodedOutputSize = last_output_upper_bound - last_output_lower_bound;
+    
+    // Check if any output is PPU type (dynamic size)
+    bool hasPPUOutput = false;
+    for (int i = 0; i < _numOutputs; i++) {
+        if (_info.outputs()[i].memory().type() == deepx_rmapinfo::MemoryType::PPU) {
+            hasPPUOutput = true;
+            break;
+        }
+    }
+    
+    // Validate encoded output size (skip for PPU outputs which have dynamic size)
+    if (has_valid_output && !hasPPUOutput && _encodedOutputSize <= 0) {
+        std::stringstream err_msg;
+        err_msg << "Invalid encoded output size: " << _encodedOutputSize;
+        LOG_DXRT_ERR(err_msg.str());
+        throw std::runtime_error("Invalid encoded output size");
+    }
 
     LOG_DXRT_DBG << "NPU Task: imported output shapes"<< endl;
     
@@ -148,16 +251,21 @@ void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_)
 
     for (int i = 0; i < _numInputs; i++)
     {
-        _inputTensors.emplace_back(Tensor(_inputNames[i], _inputShapes[i], _inputDataTypes[i], nullptr));
+        int memType = static_cast<int>(_info.inputs()[i].memory().type());
+        _inputTensors.emplace_back(Tensor(_inputNames[i], _inputShapes[i], _inputDataTypes[i], nullptr, memType));
     }
     for (int i = 0; i < _numOutputs; i++)
     {
-       _outputTensors.emplace_back(Tensor(_outputNames[i], _outputShapes[i], _outputDataTypes[i], nullptr));
+        int memType = static_cast<int>(_info.outputs()[i].memory().type());
+        _outputTensors.emplace_back(Tensor(_outputNames[i], _outputShapes[i], _outputDataTypes[i], nullptr, memType));
     }
     LOG_DXRT_DBG << "NPU Task: imported tensors" << endl;
     
-    auto rmapSize = _info.model_memory().rmap().size();
-    auto weightSize = _info.model_memory().weight().size();
+    // Use actual data size from loaded buffers, not from rmap_info metadata
+    // (rmap_info may have incorrect or zero sizes for some models)
+    auto rmapSize = data_.size() > 0 ? data_[0].size() : 0;
+    auto weightSize = data_.size() > 1 ? data_[1].size() : 0;
+    
     _npuModel.npu_id = 0;
     _npuModel.type = 0;
     _npuModel.cmds = static_cast<int32_t>(_info.counts().cmd());
@@ -177,47 +285,125 @@ void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_)
     _npuModel.input_all_size = static_cast<uint32_t>(_info.model_memory().input().size());
     _npuModel.output_all_offset = static_cast<uint32_t>(_info.model_memory().output().offset());
     _npuModel.output_all_size = static_cast<uint32_t>(_info.model_memory().output().size());
-    _npuModel.last_output_offset = static_cast<uint32_t>(_info.model_memory().output().offset() + last_output_lower_bound);
-    _npuModel.last_output_size = _encodedOutputSize;
-    _isPPU = false;
-
-    if (_info.outputs()[0].memory().type() == deepx_rmapinfo::MemoryType::ARGMAX)
-    {
-        _npuModel.type = 1;
-        _npuModel.last_output_size = 2;
-        _outputSize = 2;
-        _encodedOutputSize = _outputSize;
-        _isArgMax = true;
+    
+    // Validate before casting to uint32_t to prevent overflow
+    int64_t last_offset_calc = _info.model_memory().output().offset() + last_output_lower_bound;
+    if (last_offset_calc < 0 || last_offset_calc > UINT32_MAX) {
+        std::stringstream err_msg;
+        err_msg << "Invalid last_output_offset calculation: " << last_offset_calc 
+                << " (output.offset=" << _info.model_memory().output().offset() 
+                << ", lower_bound=" << last_output_lower_bound << ")";
+        LOG_DXRT_ERR(err_msg.str());
+        throw std::runtime_error("Invalid last_output_offset - possible overflow");
     }
-    else if (_info.outputs()[0].memory().type() == deepx_rmapinfo::MemoryType::PPU)
+    
+    _npuModel.last_output_offset = static_cast<uint32_t>(last_offset_calc);
+    _npuModel.last_output_size = _encodedOutputSize;
+    
+    _isPPU = false;
+    _isPPCPU = false;
+
+    // Check for PPCPU type (v8 with PPU binary) - HIGHEST PRIORITY
+    if (hasPpuBinary)
     {
-        
-        _npuModel.type = 2;
-        
-        // When updating from .dxnn v6 to v7, format was replaced with layout. Applying correction value to connect with existing m1 fw dataformat
-        _npuModel.format = _info.outputs()[0].layout() - 1;
+        _npuModel.type = 3;
+        _isPPCPU = true;
+        _isPPU = true;  // PPCPU is a type of PPU processing
+        DataType dataType = static_cast<DataType>(_info.outputs()[0].dtype());
+        int memType = static_cast<int>(_info.outputs()[0].memory().type());
+
+        // v8: Set format and datatype based on PPU type from compile_config.json
+        // ppu_type: 0/1 -> YOLO, 3 -> FD, 2 -> POSE (ordering preserved for backward compatibility)
+        const int ppuType = _info.ppu_type();
+        const auto ppuLayout = LayoutFromPpuType(ppuType);
+        std::string ppu_tensor_name = "NONE";
+
+        if (ppuLayout != deepx_rmapinfo::Layout::LAYOUT_NONE) {
+            _npuModel.format = LayoutToLegacyFormat(ppuLayout);
+            switch (ppuLayout) {
+                case deepx_rmapinfo::Layout::PPU_YOLO:
+                    dataType = DataType::BBOX;
+                    ppu_tensor_name = "BBOX";
+                    break;
+                case deepx_rmapinfo::Layout::PPU_FD:
+                    dataType = DataType::FACE;
+                    ppu_tensor_name = "FACE";
+                    break;
+                case deepx_rmapinfo::Layout::PPU_POSE:
+                    dataType = DataType::POSE;
+                    ppu_tensor_name = "POSE";
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            // Fallback to legacy behavior if ppu_type is not set or invalid
+            const auto fallbackLayout = static_cast<deepx_rmapinfo::Layout>(_info.outputs()[0].layout());
+            _npuModel.format = LayoutToLegacyFormat(fallbackLayout);
+        }
         
         _outputTensors.clear();
 
-        int dataType = _info.outputs()[0].dtype();
-
         _outputTensors.emplace_back(
-            Tensor(_outputNames[0], _outputShapes[0], static_cast<DataType>(dataType), nullptr)
+            //Tensor("PPU_OUTPUT", {1, _outputSize/GetDataSize_Datatype(dataType)}, dataType, nullptr)
+            Tensor(ppu_tensor_name, _outputShapes[0], dataType, nullptr, memType)
+
         );
-        _npuModel.last_output_offset = _npuModel.output_all_size; 
-        //inference acc output offset -> input offset + input size (or output all offset) + output all size
-#if DXRT_USB_NETWORK_DRIVER == 0
+        _npuModel.output_all_size *= 2; // Allocate double size for combined output
+
+        LOG_DXRT_DBG << "NPU Task: PPCPU type detected (v8 with PPU binary)" << std::endl;
+    }
+    // Check all outputs for ARGMAX type
+    else
+    {
+        bool allAreArgmax = true;
+        for (int i = 0; i < _numOutputs; i++) {
+            if (_info.outputs()[i].memory().type() == deepx_rmapinfo::MemoryType::ARGMAX) {
+                _npuModel.type = 1;
+            } else {
+                allAreArgmax = false;
+            }
+        }
         
-        _npuModel.last_output_size = 128*1024;
-        _npuModel.output_all_size += 128*1024;
-        _outputSize = 128*1024;
+        // Only set type=1 and special handling if ALL outputs are ARGMAX
+        if (allAreArgmax)
+        {
+            _isArgMax = true;
+            _npuModel.last_output_size = 2;
+            _outputSize = 2;
+            _encodedOutputSize = _outputSize;
+        }
+        else if (_info.outputs()[0].memory().type() == deepx_rmapinfo::MemoryType::PPU)
+        {
+            
+            _npuModel.type = 2;
+            
+            // When updating from .dxnn v6 to v7, format was replaced with layout. Applying correction value to connect with existing m1 fw dataformat
+            const auto layout = static_cast<deepx_rmapinfo::Layout>(_info.outputs()[0].layout());
+            _npuModel.format = LayoutToLegacyFormat(layout);
+            
+            _outputTensors.clear();
+
+            int dataType = _info.outputs()[0].dtype();
+            int memType = static_cast<int>(_info.outputs()[0].memory().type());
+
+            _outputTensors.emplace_back(
+                Tensor(_outputNames[0], _outputShapes[0], static_cast<DataType>(dataType), nullptr, memType)
+            );
+            _npuModel.last_output_offset = _npuModel.output_all_size; 
+            //inference acc output offset -> input offset + input size (or output all offset) + output all size
+#if DXRT_USB_NETWORK_DRIVER == 0
+            _npuModel.last_output_size = 128*1024;
+            _npuModel.output_all_size += 128*1024;
+            _outputSize = 128*1024;
 #else
-        _npuModel.last_output_size = 16*1024;
-        _npuModel.output_all_size += 16*1024;
-        _outputSize = 16*1024;
+            _npuModel.last_output_size = 16*1024;
+            _npuModel.output_all_size += 16*1024;
+            _outputSize = 16*1024;
 #endif
-        _encodedOutputSize = _outputSize;
-        _isPPU = true;
+            _encodedOutputSize = _outputSize;
+            _isPPU = true;
+        }
     }
 
     if (_info.version().npu() == "M1_8K")
@@ -230,7 +416,7 @@ void TaskData::set_from_npu(const std::vector<std::vector<uint8_t>>& data_)
     }
     
     _outputMemSize = std::max(static_cast<uint32_t>(0), _npuModel.output_all_size);
-    _memUsage = rmapSize + weightSize + _encodedInputSize*DXRT_TASK_MAX_LOAD + _outputMemSize*DXRT_TASK_MAX_LOAD;
+    _memUsage = rmapSize + weightSize + (static_cast<uint64_t>(_encodedInputSize) * DXRT_TASK_MAX_LOAD) + (static_cast<uint64_t>(_outputMemSize) * DXRT_TASK_MAX_LOAD);
     LOG_DXRT_DBG << "NPU Task: imported npu parameters" << endl;
 }
 
@@ -243,7 +429,7 @@ void TaskData::set_from_cpu(std::shared_ptr<CpuHandle> cpuHandle)
     _inputSize = cpuHandle->_inputSize;
     _outputSize = cpuHandle->_outputSize;
     _outputMemSize = _outputSize;
-    _memUsage = _inputSize*DXRT_TASK_MAX_LOAD + _outputMemSize*DXRT_TASK_MAX_LOAD;
+    _memUsage = (static_cast<uint64_t>(_inputSize) * DXRT_TASK_MAX_LOAD) + (static_cast<uint64_t>(_outputMemSize) * DXRT_TASK_MAX_LOAD);
     _inputDataTypes = cpuHandle->_inputDataTypes;
     _outputDataTypes = cpuHandle->_outputDataTypes;
     _inputNames = cpuHandle->_inputNames;
@@ -254,11 +440,11 @@ void TaskData::set_from_cpu(std::shared_ptr<CpuHandle> cpuHandle)
     _outputOffsets = cpuHandle->_outputOffsets;
     for (int i = 0; i < _numInputs; i++)
     {
-        _inputTensors.emplace_back(Tensor(_inputNames[i], _inputShapes[i], _inputDataTypes[i], nullptr));
+        _inputTensors.emplace_back(Tensor(_inputNames[i], _inputShapes[i], _inputDataTypes[i], nullptr)); // CPU uses DRAM (default)
     }
     for (int i = 0; i < _numOutputs; i++)
     {
-        _outputTensors.emplace_back(Tensor(_outputNames[i], _outputShapes[i], _outputDataTypes[i], nullptr));
+        _outputTensors.emplace_back(Tensor(_outputNames[i], _outputShapes[i], _outputDataTypes[i], nullptr)); // CPU uses DRAM (default)
     }
 }
 
