@@ -22,18 +22,24 @@ help() {
     echo -e "  ${COLOR_GREEN}--docker${COLOR_RESET}          Build the project within a Docker environment."
     echo -e "  ${COLOR_GREEN}--clang${COLOR_RESET}           Use Clang as the compiler for the build."
     echo -e ""
-    echo -e "  ${COLOR_GREEN}--python_exec <PATH>${COLOR_RESET} Specify the Python executable to use for the build."
+    echo -e "  ${COLOR_GREEN}--python-exec <PATH>${COLOR_RESET} Specify the Python executable to use for the build."
     echo -e "                            If omitted, the default system 'python3' will be used."
     echo -e "  ${COLOR_GREEN}--venv_path <PATH>${COLOR_RESET}  Specify the path to a virtual environment to activate for the build."
     echo -e "                            If omitted, no virtual environment will be activated."
+    echo -e "  ${COLOR_GREEN}--use_service_on${COLOR_RESET}  Enable the use of the service in the build."
+    echo -e "  ${COLOR_GREEN}--use_service_off${COLOR_RESET} Disable the use of the service in the build."
+    echo -e "  ${COLOR_GREEN}--use_ort_on${COLOR_RESET}      Enable the use of the ORT component in the build."
+    echo -e "  ${COLOR_GREEN}--use_ort_off${COLOR_RESET}     Disable the use of the ORT component in the build."
+    echo -e "  ${COLOR_GREEN}--python-break-system-packages${COLOR_RESET} Allow installing python packages in environments managed by the system package manager."
     echo -e ""
     echo -e "${COLOR_BOLD}Examples:${COLOR_RESET}"
     echo -e "  ${COLOR_YELLOW}$0 --type Release --arch x86_64${COLOR_RESET}"
     echo -e "  ${COLOR_YELLOW}$0 --clean --install /opt/dx-rt${COLOR_RESET}"
     echo -e "  ${COLOR_YELLOW}$0 --docker --verbose${COLOR_RESET}"
     echo -e ""
-    echo -e "  ${COLOR_YELLOW}$0 --python_exec /usr/local/bin/python3.8${COLOR_RESET}"
+    echo -e "  ${COLOR_YELLOW}$0 --python-exec /usr/local/bin/python3.8${COLOR_RESET}"
     echo -e "  ${COLOR_YELLOW}$0 --venv_path ./venv-dxnn${COLOR_RESET}"
+    echo -e "  ${COLOR_YELLOW}$0 --use_service_off --use_ort_off${COLOR_RESET}"
 
     if [ "$1" == "error" ] && [[ ! -n "$2" ]]; then
         echo -e "${TAG_ERROR} Invalid or missing arguments."
@@ -83,6 +89,7 @@ setup_env() {
     build_in_docker=false
     python_exec="python3"
     venv_path=""
+    python_break_system_packages=false
 
 
     # parsing dxrt.cfg.cmake
@@ -162,7 +169,33 @@ build_dxrt() {
     if [ ! -z $install ]; then
         cmd+=(-DCMAKE_INSTALL_PREFIX=$install)
     fi
-    cmd+=(-DPython_EXECUTABLE=$(which ${python_exec}))
+    
+    #cmd+=(-DPython_EXECUTABLE=$(which ${python_exec}))
+    # Force update Python path in CMake cache to avoid stale path issues
+    # If virtual environment is active, use it; otherwise use the specified python_exec
+    if [ -n "$VIRTUAL_ENV" ]; then
+        PYTHON_PATH="$VIRTUAL_ENV/bin/python3"
+        print_colored_v2 "INFO" "Using Python from virtual environment: $PYTHON_PATH"
+    else
+        PYTHON_PATH=$(which ${python_exec})
+        print_colored_v2 "INFO" "Using system Python: $PYTHON_PATH"
+    fi
+    cmd+=(-DPython_EXECUTABLE:FILEPATH=${PYTHON_PATH})
+
+
+    # set cmake options for service
+    if [ $CMAKE_USE_SERVICE == "true" ]; then
+        cmd+=(-DUSE_SERVICE=ON)
+    else
+        cmd+=(-DUSE_SERVICE=OFF)
+    fi
+
+    # set cmake options for ort
+    if [ $CMAKE_USE_ORT == "true" ]; then
+        cmd+=(-DUSE_ORT=ON)
+    else
+        cmd+=(-DUSE_ORT=OFF)
+    fi
 
     print_colored_v2 "INFO" "========== CMAKE ARGS ========================================"
     print_colored_v2 "INFO" "cmake args : ${cmd[@]}"
@@ -219,19 +252,34 @@ build_dxrt() {
     fi
 }
 
-# This function checks the system's python3 version.
+# This function checks the actual python version that will be used.
 # It prints a warning if the version is 3.8 or lower.
+# This function respects the virtual environment and python_exec variable.
 check_python_version() {
-    # Check if python3 is installed and available in the system's PATH.
-    if ! command -v python3 &> /dev/null; then
-        print_colored_v2 "WARNING" "python3 is not installed or not in PATH."
+    # Determine which Python executable to check
+    local PYTHON_TO_CHECK
+    if [ -n "$VIRTUAL_ENV" ]; then
+        PYTHON_TO_CHECK="$VIRTUAL_ENV/bin/python3"
+        print_colored_v2 "INFO" "Checking Python version from virtual environment: $PYTHON_TO_CHECK"
+    else
+        PYTHON_TO_CHECK=$(which ${python_exec} 2>/dev/null)
+        if [ -z "$PYTHON_TO_CHECK" ]; then
+            print_colored_v2 "WARNING" "${python_exec} is not installed or not in PATH."
+            return 1
+        fi
+        print_colored_v2 "INFO" "Checking Python version: $PYTHON_TO_CHECK"
+    fi
+
+    # Check if the Python executable exists
+    if [ ! -x "$PYTHON_TO_CHECK" ]; then
+        print_colored_v2 "WARNING" "Python executable not found or not executable: $PYTHON_TO_CHECK"
         return 1
     fi
 
-    # Get the python3 version string (e.g., "3.8.10").
+    # Get the python version string (e.g., "3.8.10").
     # This extracts the second field from an output like "Python 3.8.10".
     local PY_VERSION
-    PY_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
+    PY_VERSION=$("$PYTHON_TO_CHECK" --version 2>&1 | awk '{print $2}')
 
     # Split the version string into major and minor parts using the '.' delimiter.
     local MAJOR MINOR
@@ -239,7 +287,7 @@ check_python_version() {
     MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
 
     # Check if the major version is less than 3, or if the major version is 3
-    # and the minor version is 9 or less.
+    # and the minor version is 8 or less.
     if [[ "$MAJOR" -lt 3 || ( "$MAJOR" -eq 3 && "$MINOR" -le 8 ) ]]; then
         # If the condition is met, print the warning message.
         print_colored_v2 "WARNING" "The current Python version ($PY_VERSION) is 3.8 or lower. Some features may not work correctly."
@@ -260,8 +308,13 @@ install_python_package() {
             
             pushd ${SCRIPT_DIR}/python_package >/dev/null
             
-            # Attempt to install the package using python3 -m pip (more reliable than pip3)
-            install_result=$(python3 -m pip install . 2>&1)
+            # Attempt to install the package using python_exec -m pip (more reliable than pip3)
+            if [ "$python_break_system_packages" = true ]; then
+                install_result=$(${python_exec} -m pip install --break-system-packages . 2>&1)
+            else
+                install_result=$(${python_exec} -m pip install . 2>&1)
+            fi
+            install_result=$(${python_exec} -m pip install . 2>&1)
             local exit_code=$?
             
             # Check for PEP 668 specific error
@@ -275,13 +328,13 @@ install_python_package() {
             fi
             
             if [ $exit_code -eq 0 ]; then
-                python3 -m pip list | grep dx-engine
+                ${python_exec} -m pip list | grep dx-engine
                 print_colored_v2 "INFO" "The Python package has been installed in the following Python version folder."
-                echo -e "${COLOR_BRIGHT_YELLOW_ON_BLACK}  : $(python3 -m pip --version)${COLOR_RESET}"
+                echo -e "${COLOR_BRIGHT_YELLOW_ON_BLACK}  : $(${python_exec} -m pip --version)${COLOR_RESET}"
                 if [ ! -n "$VIRTUAL_ENV" ]; then
                     print_colored_v2 "HINT" "To install it in a Python virtual environment,"
                     print_colored_v2 "HINT" "you need to activate the virtual environment and then"
-                    print_colored_v2 "HINT" "reinstall it by running 'python3 -m pip install .' from the python_package folder."
+                    print_colored_v2 "HINT" "reinstall it by running '${python_exec} -m pip install .' from the python_package folder."
                 fi
                 print_colored_v2 "SUCCESS" "[Installed python package]"
                 if [ -n "$venv_path" ]; then
@@ -421,8 +474,8 @@ uninstall_dxrt() {
 uninstall_python_package() {
     print_colored_v2 "INFO" "[Uninstall python package ...]"
 
-    # Attempt to uninstall the package using python3 -m pip (more reliable than pip3)
-    uninstall_result=$(python3 -m pip uninstall -y dx-engine 2>&1)
+    # Attempt to uninstall the package using python_exec -m pip (more reliable than pip3)
+    uninstall_result=$(${python_exec} -m pip uninstall -y dx-engine 2>&1)
     local exit_code=$?
     
     # Check for PEP 668 specific error
@@ -556,7 +609,7 @@ while (( $# )); do
             target_arch=$1
             echo "Target architecture: $target_arch"
             shift;;
-        --python_exec)
+        --python-exec)
             shift
             python_exec=$1
             shift;;
@@ -571,6 +624,13 @@ while (( $# )); do
         --uninstall) uninstall=true; shift;;
         --clang) clang=true; shift;;
         --docker) build_in_docker=true; shift;;
+        --use_service_on) CMAKE_USE_SERVICE=true; shift;;
+        --use_service_off) CMAKE_USE_SERVICE=false; shift;;
+        --use_ort_on) CMAKE_USE_ORT=true; shift;;
+        --use_ort_off) CMAKE_USE_ORT=false; shift;;
+        --python-break-system-packages)
+            python_break_system_packages=true
+            shift;;
         *)
             help "error" "Invalid argument : $1"
             exit 1;;

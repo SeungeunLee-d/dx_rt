@@ -20,6 +20,7 @@
 #include <mutex>
 #include <functional>
 #include <vector>
+#include <stdint.h>
 
 
 #include "dxrt/model.h"
@@ -90,6 +91,27 @@ class DXRT_API InferenceEngine
      * @endcode
      */
     explicit InferenceEngine(const std::string &modelPath, InferenceOption &option = DefaultInferenceOption);
+
+    /** @brief Loads a model from the provided memory buffer and configures the NPU to run it.
+     * @param[in] modelBuffer A pointer to the compiled model data in memory.
+     * @param[in] option A reference to an InferenceOption object to configure devices and NPU cores.
+     * @code
+     * // Assume modelData is a pointer to the compiled model data in memory
+     * const uint8_t* modelData = ...;
+     * size_t modelSize = ...;
+     * dxrt::InferenceEngine ie(modelData, modelSize);
+     * auto outputs = ie.Run();
+     *
+     * dxrt::InferenceOption op;
+     * op.devices.push_back(0);
+     * op.boundOption = dxrt::InferenceOption::BOUND_OPTION::NPU_0; // NPU_0 only
+     * dxrt::InferenceEngine ie(modelData, modelSize, op);
+     * auto outputs = ie.Run(...);
+     * @endcode
+     */
+    explicit InferenceEngine(const uint8_t* modelBuffer, size_t modelSize, InferenceOption &option = DefaultInferenceOption);
+
+    /** @brief Destructor to clean up resources used by the InferenceEngine instance. */
     ~InferenceEngine(void);
 
     /** @brief Performs a synchronous inference for a single input, blocking until the operation is complete.
@@ -594,9 +616,17 @@ class DXRT_API InferenceEngine
      */
     size_t GetOutputTensorOffset(const std::string& tensorName) const;
 
+    friend class InferenceJob; // TODO: refactor to avoid friend class
+
  private:  // private functions
+
+    void checkService();
+
+    void loadModelFromFile(const std::string& modelPath, InferenceOption &option);
+    void loadModelFromMemory(const std::string& name, const uint8_t* modelBuffer, size_t modelSize, InferenceOption &option);
+
     int runAsync(void *inputPtr, void *userArg, void *outputPtr, int batchIndex,
-        std::function<void(TensorPtrs &outputs, void *userArg, int jobId)> batchCallback);
+        std::function<int(TensorPtrs &outputs, void *userArg, int jobId)> batchCallback);
 
     void runSubBatch(std::vector<TensorPtrs>& result, int batchCount, int startIndex,
             const std::vector<void*>& inputPtrs,
@@ -608,6 +638,10 @@ class DXRT_API InferenceEngine
 
     // Helper method to check if user output buffer should be used for final output allocation
     bool shouldUseUserOutputBuffer() const;
+
+    //for internal use only
+    void onInferenceComplete(TensorPtrs &outputs, void *userArg, int jobId);
+
 
  private:
     std::string _modelFile;
@@ -660,8 +694,8 @@ class DXRT_API InferenceEngine
 
     // Helper methods for tensor-centric management
     void initializeEnvironmentVariables();
-    void initializeModel();
-    void buildTasksAndSubgraphMap();
+    void initializeModel(const uint8_t* modelBuffer, size_t modelSize, int bufferCount);
+    void buildTasksAndSubgraphMap(int bufferCount);
     void buildInputTensorMapping();
     void buildTaskGraph();
     void buildTensorRegistry();
@@ -691,6 +725,8 @@ class DXRT_API InferenceEngine
     static std::mutex _sInferenceEngineMutex;
 
     std::vector<uint8_t> _validationOutputBuffer;
+
+    void checkInputOutputMistmatch();
 };
 
 } /* namespace dxrt */
